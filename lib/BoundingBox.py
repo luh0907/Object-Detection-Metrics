@@ -32,11 +32,11 @@ class BoundingBox:
             classConfidence: (optional) Float value representing the confidence of the detected
             class. If detectionType is Detection, classConfidence needs to be informed.
             format: (optional) Enum (BBFormat.XYWH or BBFormat.XYX2Y2) indicating the format of the
-            coordinates of the bounding boxes. BBFormat.XYWH: <left> <top> <width> <height>
-            BBFormat.XYX2Y2: <left> <top> <right> <bottom>.
+            coordinates of the bounding boxes. BBFormat.XYWH: <left> <top> <width> <height>,
+            BBFormat.XYX2Y2: <left> <top> <right> <bottom>,
+            BBFormat.QUAD: <lt: x1, y1> <rt: x2, y2> <rb: x3, y3> <lb: x4, y4>.
         """
         self._imageName = imageName
-        self._typeCoordinates = typeCoordinates
         if typeCoordinates == CoordinatesType.Relative and imgSize is None:
             raise IOError(
                 'Parameter \'imgSize\' is required. It is necessary to inform the image size.')
@@ -63,6 +63,10 @@ class BoundingBox:
                 self._y2 = self._h
                 self._w = self._x2 - self._x
                 self._h = self._y2 - self._y
+                self._lt = (self._x, self._y)
+                self._rt = (self._x2, self._y)
+                self._rb = (self._x2, self._y2)
+                self._lb = (self._x, self._y2)
             else:
                 raise IOError(
                     'For relative coordinates, the format must be XYWH (x,y,width,height)')
@@ -75,11 +79,31 @@ class BoundingBox:
                 self._h = h
                 self._x2 = self._x + self._w
                 self._y2 = self._y + self._h
-            else:  # format == BBFormat.XYX2Y2: <left> <top> <right> <bottom>.
+                self._lt = (self._x, self._y)
+                self._rt = (self._x2, self._y)
+                self._rb = (self._x2, self._y2)
+                self._lb = (self._x, self._y2)
+            elif format == BBFormat.XYX2Y2:  # <left> <top> <right> <bottom>.
                 self._x2 = w
                 self._y2 = h
                 self._w = self._x2 - self._x
                 self._h = self._y2 - self._y
+                self._lt = (self._x, self._y)
+                self._rt = (self._x2, self._y)
+                self._rb = (self._x2, self._y2)
+                self._lb = (self._x, self._y2)
+            else:   # format == BBFormat.QUAD: <lt: x1, y1> <rt: x2, y2> <rb: x3, y3> <lb: x4, y4>.
+                self._lt = tuple(x)
+                self._rt = tuple(y)
+                self._rb = tuple(w)
+                self._lb = tuple(h)
+                self._x = min(self._lt[0], self._rt[0], self._rb[0], self._lb[0])
+                self._y = min(self._lt[1], self._rt[1], self._rb[1], self._lb[1])
+                self._x2 = max(self._lt[0], self._rt[0], self._rb[0], self._lb[0])
+                self._y2 = max(self._lt[1], self._rt[1], self._rb[1], self._lb[1])
+                self._w = self._x2 - self._x
+                self._h = self._y2 - self._y
+
         if imgSize is None:
             self._width_img = None
             self._height_img = None
@@ -92,6 +116,8 @@ class BoundingBox:
             return (self._x, self._y, self._w, self._h)
         elif format == BBFormat.XYX2Y2:
             return (self._x, self._y, self._x2, self._y2)
+        else:
+            return (self._lt, self._rt, self._rb, self._lb)
 
     def getRelativeBoundingBox(self, imgSize=None):
         if imgSize is None and self._width_img is None and self._height_img is None:
@@ -119,17 +145,14 @@ class BoundingBox:
     def getImageSize(self):
         return (self._width_img, self._height_img)
 
-    def getCoordinatesType(self):
-        return self._typeCoordinates
-
     def getBBType(self):
         return self._bbType
 
     @staticmethod
     def compare(det1, det2):
-        det1BB = det1.getAbsoluteBoundingBox()
+        det1BB = det1.getAbsoluteBoundingBox(format=BBFormat.QUAD)
         det1ImgSize = det1.getImageSize()
-        det2BB = det2.getAbsoluteBoundingBox()
+        det2BB = det2.getAbsoluteBoundingBox(format=BBFormat.QUAD)
         det2ImgSize = det2.getImageSize()
 
         if det1.getClassId() == det2.getClassId() and \
@@ -145,8 +168,8 @@ class BoundingBox:
 
     @staticmethod
     def clone(boundingBox):
-        absBB = boundingBox.getAbsoluteBoundingBox(format=BBFormat.XYWH)
-        # return (self._x,self._y,self._x2,self._y2)
+        absBB = boundingBox.getAbsoluteBoundingBox(format=BBFormat.QUAD)
+        # return (self._lt, self._rt, self._rb, self._lb)
         newBoundingBox = BoundingBox(
             boundingBox.getImageName(),
             boundingBox.getClassId(),
@@ -154,9 +177,9 @@ class BoundingBox:
             absBB[1],
             absBB[2],
             absBB[3],
-            typeCoordinates=boundingBox.getCoordinatesType(),
+            typeCoordinates=CoordinatesType.Absolute,
             imgSize=boundingBox.getImageSize(),
             bbType=boundingBox.getBBType(),
             classConfidence=boundingBox.getConfidence(),
-            format=BBFormat.XYWH)
+            format=BBFormat.QUAD)
         return newBoundingBox

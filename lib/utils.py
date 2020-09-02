@@ -43,12 +43,15 @@ class BBFormat(Enum):
     Class representing the format of a bounding box.
     It can be (X,Y,width,height) => XYWH
     or (X1,Y1,X2,Y2) => XYX2Y2
+    or (Left-Top-XY, Right-Top-XY, Right-Bottom-XY, Left-Bottom-XY) => QUAD
 
         Developed by: Rafael Padilla
-        Last modification: May 24 2018
+        Added QUAD by: Euihyun Lee
+        Last modification: Sep 2 2020
     """
     XYWH = 1
     XYX2Y2 = 2
+    QUAD = 3
 
 
 # size => (width, height) of the image
@@ -99,12 +102,13 @@ def add_bb_into_image(image, bb, color=(255, 0, 0), thickness=2, label=None):
     fontScale = 0.5
     fontThickness = 1
 
-    x1, y1, x2, y2 = bb.getAbsoluteBoundingBox(BBFormat.XYX2Y2)
-    x1 = int(x1)
-    y1 = int(y1)
-    x2 = int(x2)
-    y2 = int(y2)
-    cv2.rectangle(image, (x1, y1), (x2, y2), (b, g, r), thickness)
+    lt, rt, rb, lb = bb.getAbsoluteBoundingBox(BBFormat.QUAD)
+    x1 = int(lt[0])
+    y1 = int(lt[1])
+    cv2.line(image, lt, rt, (b, g, r), thickness)
+    cv2.line(image, rt, rb, (b, g, r), thickness)
+    cv2.line(image, rb, lb, (b, g, r), thickness)
+    cv2.line(image, lb, lt, (b, g, r), thickness)
     # Add label
     if label is not None:
         # Get size of the text box
