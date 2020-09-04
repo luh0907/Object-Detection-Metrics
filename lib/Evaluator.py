@@ -11,9 +11,11 @@
 import os
 import sys
 from collections import Counter
+from shapely.geometry import Polygon
 
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
 
 from BoundingBox import *
 from BoundingBoxes import *
@@ -56,21 +58,22 @@ class Evaluator:
         detections = []
         # Get all classes
         classes = []
+        print("Separating GT and detections...")
         # Loop through all bounding boxes and separate them into GTs and detections
-        for bb in boundingboxes.getBoundingBoxes():
-            # [imageName, class, confidence, (bb coordinates XYX2Y2)]
+        for bb in tqdm(boundingboxes.getBoundingBoxes()):
+            # [imageName, class, confidence, (bb coordinates QUAD)]
             if bb.getBBType() == BBType.GroundTruth:
                 groundTruths.append([
                     bb.getImageName(),
                     bb.getClassId(), 1,
-                    bb.getAbsoluteBoundingBox(BBFormat.XYX2Y2)
+                    bb.getAbsoluteBoundingBox(BBFormat.QUAD)
                 ])
             else:
                 detections.append([
                     bb.getImageName(),
                     bb.getClassId(),
                     bb.getConfidence(),
-                    bb.getAbsoluteBoundingBox(BBFormat.XYX2Y2)
+                    bb.getAbsoluteBoundingBox(BBFormat.QUAD)
                 ])
             # get class
             if bb.getClassId() not in classes:
@@ -94,9 +97,9 @@ class Evaluator:
             det = Counter([cc[0] for cc in gts])
             for key, val in det.items():
                 det[key] = np.zeros(val)
-            # print("Evaluating class: %s (%d detections)" % (str(c), len(dects)))
+            print("Evaluating class: %s (%d detections)" % (str(c), len(dects)))
             # Loop through detections
-            for d in range(len(dects)):
+            for d in tqdm(range(len(dects))):
                 # print('dect %s => %s' % (dects[d][0], dects[d][3],))
                 # Find ground truth image
                 gt = [gt for gt in gts if gt[0] == dects[d][0]]
@@ -364,10 +367,10 @@ class Evaluator:
     @staticmethod
     def _getAllIOUs(reference, detections):
         ret = []
-        bbReference = reference.getAbsoluteBoundingBox(BBFormat.XYX2Y2)
+        bbReference = reference.getAbsoluteBoundingBox(BBFormat.QUAD)
         # img = np.zeros((200,200,3), np.uint8)
         for d in detections:
-            bb = d.getAbsoluteBoundingBox(BBFormat.XYX2Y2)
+            bb = d.getAbsoluteBoundingBox(BBFormat.QUAD)
             iou = Evaluator.iou(bbReference, bb)
             # Show blank image with the bounding boxes
             # img = add_bb_into_image(img, d, color=(255,0,0), thickness=2, label=None)
@@ -378,8 +381,12 @@ class Evaluator:
         # cv2.destroyWindow("comparing")
         return sorted(ret, key=lambda i: i[0], reverse=True)  # sort by iou (from highest to lowest)
 
+    # boxA = (ltA:[x1, y1], rtA:[x2, y2], rbA: [x3, y3], lbA: [x4, y4])
+    # boxB = (ltB:[x1, y1], rtB:[x2, y2], rbB: [x3, y3], lbB: [x4, y4])
     @staticmethod
     def iou(boxA, boxB):
+        boxA = Polygon(boxA)
+        boxB = Polygon(boxB)
         # if boxes dont intersect
         if Evaluator._boxesIntersect(boxA, boxB) is False:
             return 0
@@ -390,28 +397,13 @@ class Evaluator:
         assert iou >= 0
         return iou
 
-    # boxA = (Ax1,Ay1,Ax2,Ay2)
-    # boxB = (Bx1,By1,Bx2,By2)
     @staticmethod
     def _boxesIntersect(boxA, boxB):
-        if boxA[0] > boxB[2]:
-            return False  # boxA is right of boxB
-        if boxB[0] > boxA[2]:
-            return False  # boxA is left of boxB
-        if boxA[3] < boxB[1]:
-            return False  # boxA is above boxB
-        if boxA[1] > boxB[3]:
-            return False  # boxA is below boxB
-        return True
+        return boxA.intersects(boxB)
 
     @staticmethod
     def _getIntersectionArea(boxA, boxB):
-        xA = max(boxA[0], boxB[0])
-        yA = max(boxA[1], boxB[1])
-        xB = min(boxA[2], boxB[2])
-        yB = min(boxA[3], boxB[3])
-        # intersection area
-        return (xB - xA + 1) * (yB - yA + 1)
+        return boxA.intersection(boxB).area
 
     @staticmethod
     def _getUnionAreas(boxA, boxB, interArea=None):
@@ -423,4 +415,4 @@ class Evaluator:
 
     @staticmethod
     def _getArea(box):
-        return (box[2] - box[0] + 1) * (box[3] - box[1] + 1)
+        return box.area
