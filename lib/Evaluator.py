@@ -12,6 +12,8 @@ import os
 import sys
 from collections import Counter
 from shapely.geometry import Polygon
+from multiprocessing import Pool
+from functools import partial
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -104,12 +106,11 @@ class Evaluator:
                 # Find ground truth image
                 gt = [gt for gt in gts if gt[0] == dects[d][0]]
                 iouMax = sys.float_info.min
-                for j in range(len(gt)):
-                    # print('Ground truth gt => %s' % (gt[j][3],))
-                    iou = Evaluator.iou(dects[d][3], gt[j][3])
-                    if iou > iouMax:
-                        iouMax = iou
-                        jmax = j
+                pool = Pool(processes=4)
+                box_gts = [gt[j][3] for j in range(len(gt))]
+                ious = pool.map(partial(Evaluator.iou, boxA=dects[d][3]), box_gts)
+                iouMax = max(ious)
+                jmax = ious.index(iouMax)
                 # Assign detection as true positive/don't care/false positive
                 if iouMax >= IOUThreshold:
                     if det[dects[d][0]][jmax] == 0:
