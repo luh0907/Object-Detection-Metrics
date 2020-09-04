@@ -108,7 +108,7 @@ class Evaluator:
                 iouMax = sys.float_info.min
                 pool = Pool(processes=4)
                 box_gts = [gt[j][3] for j in range(len(gt))]
-                ious = pool.map(partial(Evaluator.iou, boxA=dects[d][3]), box_gts)
+                ious = pool.map(partial(Evaluator.iou, dects[d][3]), box_gts)
                 iouMax = max(ious)
                 jmax = ious.index(iouMax)
                 # Assign detection as true positive/don't care/false positive
