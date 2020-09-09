@@ -73,7 +73,8 @@ class Evaluator:
                     bb.getImageName(),
                     bb.getClassId(), 
                     1,
-                    bb.getAbsoluteBoundingBox(BBFormat.QUAD)
+                    bb.getAbsoluteBoundingBox(BBFormat.QUAD),
+                    False
                 ])
             else:
                 if not bb_image_name in detections:
@@ -82,7 +83,8 @@ class Evaluator:
                     bb.getImageName(),
                     bb.getClassId(),
                     bb.getConfidence(),
-                    bb.getAbsoluteBoundingBox(BBFormat.QUAD)
+                    bb.getAbsoluteBoundingBox(BBFormat.QUAD),
+                    False
                 ])
             # get class
             if bb.getClassId() not in classes:
@@ -135,11 +137,14 @@ class Evaluator:
                     ious = [Evaluator.iou(dect[d][3], gt[j][3]) for j in range(len(gt))]
                     iouMax = max(ious)
                     jmax = ious.index(iouMax)
+                    dect[d][4] = True
                     # Assign detection as true positive/don't care/false positive
                     if iouMax >= IOUThreshold:
-                        if det[dect[d][0]][jmax] == 0:
+                        #if det[dect[d][0]][jmax] == 0:
+                        if not gt[jmax][4]:
                             TP[rank_lookup[cnt_pos+d]] = 1  # count as true positive
-                            det[dect[d][0]][jmax] = 1  # flag as already 'seen'
+                            #det[dect[d][0]][jmax] = 1  # flag as already 'seen'
+                            gt[jmax][4] = True
                             # print("TP")
                         else:
                             FP[rank_lookup[cnt_pos+d]] = 1  # count as false positive
@@ -159,6 +164,12 @@ class Evaluator:
                 [ap, mpre, mrec, ii] = Evaluator.CalculateAveragePrecision(rec, prec)
             else:
                 [ap, mpre, mrec, _] = Evaluator.ElevenPointInterpolatedAP(rec, prec)
+            # Select false negatives
+            fns = {}
+            for img_name in groundTruths:
+                fns[img_name] = [gt
+                                 for gt in gts[img_name]
+                                 if not gt[4]]
             # add class result in the dictionary to be returned
             r = {
                 'class': c,
@@ -169,7 +180,9 @@ class Evaluator:
                 'interpolated recall': mrec,
                 'total positives': npos,
                 'total TP': np.sum(TP),
-                'total FP': np.sum(FP)
+                'total FP': np.sum(FP),
+                'total FN': sum([len(fns[img_name]) for img_name in fns]),
+                'FNs': fns
             }
             ret.append(r)
         return ret
