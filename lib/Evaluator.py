@@ -10,8 +10,11 @@
 
 import os
 import sys
+import time
 from collections import Counter
 from shapely.geometry import Polygon
+from multiprocessing import Pool
+from functools import partial
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -53,23 +56,29 @@ class Evaluator:
         """
         ret = []  # list containing metrics (precision, recall, average precision) of each class
         # List with all ground truths (Ex: [imageName,class,confidence=1, (bb coordinates XYX2Y2)])
-        groundTruths = []
+        groundTruths = {}
         # List with all detections (Ex: [imageName,class,confidence,(bb coordinates XYX2Y2)])
-        detections = []
+        detections = {}
         # Get all classes
         classes = []
         print("Separating GT and detections...")
         # Loop through all bounding boxes and separate them into GTs and detections
         for bb in tqdm(boundingboxes.getBoundingBoxes()):
             # [imageName, class, confidence, (bb coordinates QUAD)]
+            bb_image_name = bb.getImageName()
             if bb.getBBType() == BBType.GroundTruth:
-                groundTruths.append([
+                if not bb_image_name in groundTruths:
+                    groundTruths[bb_image_name] = []
+                groundTruths[bb_image_name].append([
                     bb.getImageName(),
-                    bb.getClassId(), 1,
+                    bb.getClassId(), 
+                    1,
                     bb.getAbsoluteBoundingBox(BBFormat.QUAD)
                 ])
             else:
-                detections.append([
+                if not bb_image_name in detections:
+                    detections[bb_image_name] = []
+                detections[bb.getImageName()].append([
                     bb.getImageName(),
                     bb.getClassId(),
                     bb.getConfidence(),
@@ -83,46 +92,63 @@ class Evaluator:
         # Loop through by classes
         for c in classes:
             # Get only detection of class c
-            dects = []
-            [dects.append(d) for d in detections if d[1] == c]
+            dects = {}
+            for img_name in detections:
+                dects[img_name] = [detection 
+                                   for detection in detections[img_name] 
+                                   if detection[1] == c]
             # Get only ground truths of class c
-            gts = []
-            [gts.append(g) for g in groundTruths if g[1] == c]
-            npos = len(gts)
+            gts = {}
+            for img_name in groundTruths:
+                gts[img_name] = [gt
+                                 for gt in groundTruths[img_name]
+                                 if gt[1] == c]
+            npos = sum([len(gts[img_name]) for img_name in gts])
             # sort detections by decreasing confidence
-            dects = sorted(dects, key=lambda conf: conf[2], reverse=True)
-            TP = np.zeros(len(dects))
-            FP = np.zeros(len(dects))
+            aggregated_dects = []
+            for img_name in dects:
+                dects[img_name].sort(key=lambda conf: conf[2], reverse=True)
+                aggregated_dects.extend(dects[img_name])
+            len_dects = len(aggregated_dects)
+
+            rank_lookup_inv = [[i, aggregated_dects[i][2]] for i in range(len_dects)]
+            rank_lookup_inv.sort(key=lambda lookup: lookup[1], reverse=True)
+            rank_lookup = [0 for _ in range(len_dects)]
+            for i in range(len_dects):
+                rank_lookup[rank_lookup_inv[i][0]] = i
+
+            TP = np.zeros(len_dects)
+            FP = np.zeros(len_dects)
+            cnt_pos = 0
             # create dictionary with amount of gts for each image
-            det = Counter([cc[0] for cc in gts])
-            for key, val in det.items():
-                det[key] = np.zeros(val)
-            print("Evaluating class: %s (%d detections)" % (str(c), len(dects)))
+            det = {}
+            for key in gts:
+                det[key] = np.zeros(len(gts[key]))
+            print("Evaluating class: %s (%d detections)" % (str(c), len_dects))
             # Loop through detections
-            for d in tqdm(range(len(dects))):
-                # print('dect %s => %s' % (dects[d][0], dects[d][3],))
-                # Find ground truth image
-                gt = [gt for gt in gts if gt[0] == dects[d][0]]
-                iouMax = sys.float_info.min
-                for j in range(len(gt)):
-                    # print('Ground truth gt => %s' % (gt[j][3],))
-                    iou = Evaluator.iou(dects[d][3], gt[j][3])
-                    if iou > iouMax:
-                        iouMax = iou
-                        jmax = j
-                # Assign detection as true positive/don't care/false positive
-                if iouMax >= IOUThreshold:
-                    if det[dects[d][0]][jmax] == 0:
-                        TP[d] = 1  # count as true positive
-                        det[dects[d][0]][jmax] = 1  # flag as already 'seen'
-                        # print("TP")
+            for img_name in tqdm(dects):
+                gt = gts[img_name]
+                dect = dects[img_name]
+                for d in range(len(dects[img_name])):
+                    # print('dect %s => %s' % (dects[d][0], dects[d][3],))
+                    # Find ground truth image
+                    ious = [Evaluator.iou(dect[d][3], gt[j][3]) for j in range(len(gt))]
+                    iouMax = max(ious)
+                    jmax = ious.index(iouMax)
+                    # Assign detection as true positive/don't care/false positive
+                    if iouMax >= IOUThreshold:
+                        if det[dect[d][0]][jmax] == 0:
+                            TP[rank_lookup[cnt_pos+d]] = 1  # count as true positive
+                            det[dect[d][0]][jmax] = 1  # flag as already 'seen'
+                            # print("TP")
+                        else:
+                            FP[rank_lookup[cnt_pos+d]] = 1  # count as false positive
+                            # print("FP")
+                    # - A detected "cat" is overlaped with a GT "cat" with IOU >= IOUThreshold.
                     else:
-                        FP[d] = 1  # count as false positive
+                        FP[rank_lookup[cnt_pos+d]] = 1  # count as false positive
                         # print("FP")
-                # - A detected "cat" is overlaped with a GT "cat" with IOU >= IOUThreshold.
-                else:
-                    FP[d] = 1  # count as false positive
-                    # print("FP")
+                cnt_pos += len(dects[img_name])
             # compute precision, recall and average precision
             acc_FP = np.cumsum(FP)
             acc_TP = np.cumsum(TP)
@@ -305,7 +331,7 @@ class Evaluator:
             mpre[i - 1] = max(mpre[i - 1], mpre[i])
         ii = []
         for i in range(len(mrec) - 1):
-            if mrec[1:][i] != mrec[0:-1][i]:
+            if mrec[i + 1] != mrec[i]:
                 ii.append(i + 1)
         ap = 0
         for i in ii:
